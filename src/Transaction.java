@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 
 public class Transaction {
+
     private String id;
     private ProjectLib PL;
 	private Map<String, List<String>> sourceMap;
@@ -16,7 +17,8 @@ public class Transaction {
 	private byte[] image;
 	private String fileName;
 
-    public Transaction(String id, String fileName, byte[] img, String[] sources) {
+    public Transaction(String id, String fileName, byte[] img, String[] sources, ProjectLib PL) {
+		this.PL = PL;
         this.id = id;
         this.fileName = fileName;
         this.image = img;
@@ -28,7 +30,7 @@ public class Transaction {
     public void askForVote() {
         String imgBase64 = Base64.getEncoder().encodeToString(image); // encode image to base64
         for (String node : sourceMap.keySet()) {
-            String msg = "prepare:" + String.join(",", sourceMap.get(node)) + ";" + imgBase64;
+            String msg = "prepare:" + id + ":" + String.join(",", sourceMap.get(node)) + ":" + imgBase64;
             PL.sendMessage(new ProjectLib.Message(node, msg.getBytes()));
         }
     }
@@ -43,27 +45,27 @@ public class Transaction {
                 break;
             default:
                 break;
-        
         }
     }
 
     private void handlePrepareRes(ProjectLib.Message msg) {
-		String msgBody = new String(msg.body);
-		System.out.println("Server: Got message from " + msg.addr + " Content: " + msgBody, " id: ", id);
+		String res = new String(msg.body).split(":", 2)[1];
+		System.out.println("Server: Got message from " + msg.addr + " Content: " + res + " id: " + id);
 
-		if (msgBody.equals("Yes") || msgBody.equals("No")) {
-			nodeRes.put(msg.addr, msgBody.equals("Yes"));
+
+		if (res.equals("Yes") || res.equals("No")) {
+			nodeRes.put(msg.addr, res.equals("Yes"));
 
 			if (recvAllRes()) {
 				if (nodeRes.values().stream().allMatch(decision -> decision.equals(Boolean.TRUE))) {
 					for (String node : sourceMap.keySet()) {
-						String msgToSend = "decision:commit;" + String.join(",", sourceMap.get(node));
-						PL.sendMessage(new ProjectLib.Message(node, msgToSend.getBytes()));
+						String msg2Send = "decision:" + id + ":" + "commit:" + String.join(",", sourceMap.get(node));
+						PL.sendMessage(new ProjectLib.Message(node, msg2Send.getBytes()));
 					}
 				} else {
 					for (String node : sourceMap.keySet()) {
-						String msgToSend = "decision:abort;" + String.join(",", sourceMap.get(node));
-						PL.sendMessage(new ProjectLib.Message(node, msgToSend.getBytes()));
+						String msg2Send = "decision:" + id + ":" + "abort:" + String.join(",", sourceMap.get(node));
+						PL.sendMessage(new ProjectLib.Message(node, msg2Send.getBytes()));
 					}
 				}
 
@@ -75,18 +77,18 @@ public class Transaction {
 		}
 	}
 
-    private void handleDecisionRes(ProjectLib.Message msg, Map<String, Boolean> nodeRes) {
-		String msgBody = new String(msg.body);
-		System.out.println("Server: Got message from " + msg.addr + " Content: " + msgBody, " id: ", id);
+    private void handleDecisionRes(ProjectLib.Message msg) {
+		String res = new String(msg.body).split(":", 2)[1];
+		System.out.println("Server: Got message from " + msg.addr + " Content: " + res + " id: " + id);
 
-		if (msgBody.equals("ACK")) {
+		if (res.equals("ACK")) {
 			nodeRes.put(msg.addr, true);
 			if (recvAllRes()) {
-				System.out.println("Server: All nodes have acknowledged");
+				System.out.println(id + ": All nodes have acknowledged");
 				write2Dir(fileName, image);
 			} 
 		} else {
-			System.out.println("Server: Unknown message received");
+			System.out.println(id + ": Unknown message received");
 		}
 	
     }

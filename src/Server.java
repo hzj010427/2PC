@@ -11,12 +11,12 @@ import java.util.UUID;
 public class Server implements ProjectLib.CommitServing {
 
 	public static ProjectLib PL;
-	public static Map<String, Transaction> transactionMap;
+	public static Map<String, Transaction> transactionMap = new HashMap<>();
 
 	public void startCommit(String filename, byte[] img, String[] sources) {
 		System.out.println("Server: Got request to commit " + filename);
 		String transactionId = UUID.randomUUID().toString();
-		Transaction transaction = new Transaction(transactionId, filename, img, sources);
+		Transaction transaction = new Transaction(transactionId, filename, img, sources, PL);
 		transactionMap.put(transactionId, transaction);
 		transaction.askForVote();
 	}
@@ -28,9 +28,10 @@ public class Server implements ProjectLib.CommitServing {
 		
 		while (true) {
 			ProjectLib.Message msg = PL.getMessage();
-			// parse message to get transactionId
-			// Transaction transaction = transactionMap.get(transactionId);
-			// transaction.handleRes(msg);
+			String parts[] = new String(msg.body).split(":", 2);
+			String transactionId = parts[0];
+			Transaction transaction = transactionMap.get(transactionId);
+			transaction.handleRes(msg);
 		}
 	}
 }

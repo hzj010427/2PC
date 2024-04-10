@@ -35,54 +35,60 @@ public class UserNode implements ProjectLib.MessageHandling {
 	}
 
 	private void handlePrepare(ProjectLib.Message msg) {
-		String files[] = 
-			new String(msg.body).split(":", 2)[1].split(";", 2)[0].split(",");
-		byte[] image = 
-			Base64.getDecoder().decode(new String(msg.body).split(":", 2)[1].split(";", 2)[1]); // decode image
-		boolean fileExists = checkFilesExists(files);
+		String[] parts = new String(msg.body).split(":", 4);
+		String transactionId = parts[1];
+		String files[] = parts[2].split(",");
+		byte[] image = Base64.getDecoder().decode(parts[3]);
 		boolean userDecision = false;
 		String res = null;
 
-		if (fileExists) {
-			try {
-				lockResources(files);
-				userDecision = PL.askUser(image, files);
-			} catch (IOException e) {
-				e.printStackTrace();
-				System.out.println(myId + ": Error while locking resources");
+		synchronized (lockedFiles) {
+			if (checkFilesExists(files) && !checkFilesOccupied(files)) {
+				try {
+					lockResources(files);
+					userDecision = PL.askUser(image, files);
+				} catch (IOException e) {
+					e.printStackTrace();
+					System.out.println(myId + ": Error while locking resources");
+				}
+			}
+	
+			if (!userDecision) {
+				try {
+					releaseResources(files);
+				} catch (IOException e) {
+					e.printStackTrace();
+					System.out.println(myId + ": Error while releasing resources");
+				}
 			}
 		}
 
-		if (!userDecision) {
-			try {
-				releaseResources(files);
-			} catch (IOException e) {
-				e.printStackTrace();
-				System.out.println(myId + ": Error while releasing resources");
-			}
-		}
-
-		res = userDecision ? "Yes" : "No";
+		res = userDecision ? transactionId + ":Yes" : transactionId + ":No";
 		PL.sendMessage(new ProjectLib.Message(msg.addr, res.getBytes()));
 	}
 
 	private void handleDecision(ProjectLib.Message msg) {
-		String decision = new String(msg.body).split(":", 2)[1].split(";", 2)[0];
-		String files[] = new String(msg.body).split(":", 2)[1].split(";", 2)[1].split(",");
+		String[] parts = new String(msg.body).split(":", 4);
+		String transactionId = parts[1];
+		String decision = parts[2];
+		String files[] = parts[3].split(",");
 
-		try {
-			if (decision.equals("commit")) {
-				deleteFiles(files);
-				releaseResources(files);
-				PL.sendMessage(new ProjectLib.Message(msg.addr, "ACK".getBytes()));
-			} else if (decision.equals("abort")) {
-				releaseResources(files);
-			} else {
-				System.out.println(myId + ": Unknown decision received");
+		synchronized (lockedFiles) {
+			try {
+				if (decision.equals("commit")) {
+					deleteFiles(files);
+					releaseResources(files);
+					String res = transactionId + ":ACK";
+					PL.sendMessage(new ProjectLib.Message(msg.addr, res.getBytes()));
+				} else if (decision.equals("abort")) {
+					releaseResources(files);
+				} else {
+					System.out.println(myId + ": Unknown decision received");
+				}
+			} catch (IOException e) {
+				e.printStackTrace();
+				System.out.println(myId + ": Error while releasing resources");
 			}
-		} catch (IOException e) {
-			e.printStackTrace();
-			System.out.println(myId + ": Error while releasing resources");
 		}
 	}
 
@@ -94,6 +100,15 @@ public class UserNode implements ProjectLib.MessageHandling {
 			}
 		}
 		return true;
+	}
+
+	private boolean checkFilesOccupied(String files[]) {
+		for (String file : files) {
+			if (lockedFiles.containsKey(file)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private void deleteFiles(String files[]) {
@@ -121,7 +136,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 		}
 	}
 	
-	public static void main ( String args[]) throws Exception {
+	public static void main (String args[]) throws Exception {
 		if (args.length != 2) throw new Exception("Need 2 args: <port> <id>");
 		UserNode UN = new UserNode(args[1]);
 		PL = new ProjectLib(Integer.parseInt(args[0]), args[1], UN);
