@@ -31,6 +31,7 @@ public class Server implements ProjectLib.CommitServing {
 			String parts[] = new String(msg.body).split(":", 2);
 			String transactionId = parts[0];
 			Transaction transaction = transactionMap.get(transactionId);
+			transaction.setResponseTime(System.currentTimeMillis());
 			transaction.handleRes(msg);
 		}
 	}

@@ -10,10 +10,12 @@ import java.util.Base64;
 import java.util.HashMap;
 
 public class UserNode implements ProjectLib.MessageHandling {
-	public final String myId;
-	public final HashMap<String, FileLock> lockedFiles = new HashMap<>();
-	public static ProjectLib PL;
 
+	private final String myId;
+	private final HashMap<String, FileLock> lockedFiles = new HashMap<>();
+	private final HashMap<String, Log> WALs = new HashMap<>();
+	public static ProjectLib PL;
+	
 	public UserNode(String id) {
 		myId = id;
 	}
@@ -41,6 +43,8 @@ public class UserNode implements ProjectLib.MessageHandling {
 		byte[] image = Base64.getDecoder().decode(parts[3]);
 		boolean userDecision = false;
 		String res = null;
+		Log WAL = getWAL(transactionId);
+		WAL.write2Log("id: " + transactionId + ", source: " + msg.addr + ", content: prepare");
 
 		synchronized (lockedFiles) {
 			if (checkFilesExists(files) && !checkFilesOccupied(files)) {
@@ -64,6 +68,8 @@ public class UserNode implements ProjectLib.MessageHandling {
 		}
 
 		res = userDecision ? transactionId + ":Yes" : transactionId + ":No";
+		WAL.write2Log("response: " + (userDecision ? "Yes" : "No"));
+		PL.fsync();
 		PL.sendMessage(new ProjectLib.Message(msg.addr, res.getBytes()));
 	}
 
@@ -72,6 +78,8 @@ public class UserNode implements ProjectLib.MessageHandling {
 		String transactionId = parts[1];
 		String decision = parts[2];
 		String files[] = parts[3].split(",");
+		Log WAL = getWAL(transactionId);
+		WAL.write2Log("id: " + transactionId + ", source: " + msg.addr + ", content: " + decision);
 
 		synchronized (lockedFiles) {
 			try {
@@ -79,6 +87,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 					deleteFiles(files);
 					releaseResources(files);
 					String res = transactionId + ":ACK";
+					WAL.write2Log("response: ACK");
 					PL.sendMessage(new ProjectLib.Message(msg.addr, res.getBytes()));
 				} else if (decision.equals("abort")) {
 					releaseResources(files);
@@ -134,6 +143,13 @@ public class UserNode implements ProjectLib.MessageHandling {
 				lockedFiles.remove(file);
 			}
 		}
+	}
+
+	private Log getWAL(String transactionId) {
+		if (!WALs.containsKey(transactionId)) {
+			WALs.put(transactionId, new Log(transactionId));
+		}
+		return WALs.get(transactionId);
 	}
 	
 	public static void main (String args[]) throws Exception {
