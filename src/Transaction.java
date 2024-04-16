@@ -7,6 +7,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Represents a transaction in a distributed system that handles a two-phase commit protocol. 
+ * This class manages the transaction's lifecycle, which includes the preparation, commit, 
+ * abort phases, and handles responses from different nodes involved in the transaction.
+ */
 public class Transaction {
 
 	private static final int TIMEOUT = 6000; // 6 seconds
@@ -22,6 +27,15 @@ public class Transaction {
 	private long responseTime;
 	private Log WAL;
 
+	/**
+     * Constructs a Transaction object with specific details needed to process it.
+     *
+     * @param id       Unique identifier for this transaction.
+     * @param fileName The name of the file associated with the transaction.
+     * @param img      The image data related to the transaction in byte array format.
+     * @param sources  Array of strings representing the source nodes and associated files.
+     * @param PL       Reference to the ProjectLib instance for communication purposes.
+     */
     public Transaction(String id, String fileName, byte[] img, String[] sources, ProjectLib PL) {
 		this.PL = PL;
         this.id = id;
@@ -33,6 +47,9 @@ public class Transaction {
 		this.WAL = new Log(id);
     }
 
+	/**
+     * Initiates the prepare phase of the transaction by asking all participating nodes to vote.
+     */
     public void askForVote() {
 		startTime = System.currentTimeMillis(); // start timer before sending prepare message
         String imgBase64 = Base64.getEncoder().encodeToString(image);
@@ -45,6 +62,9 @@ public class Transaction {
         }
     }
 
+	/**
+     * Re-initiates the prepare phase by resending the vote request to all participating nodes.
+     */
 	public void reAskForVote() {
 		String imgBase64 = Base64.getEncoder().encodeToString(image);
 		for (String node : sourceMap.keySet()) {
@@ -54,6 +74,11 @@ public class Transaction {
         }
 	}
 
+	/**
+     * Handles responses received from nodes during the transaction. This method processes responses based on the current phase of the transaction.
+     *
+     * @param msg The message received from a node.
+     */
     public synchronized void handleRes(ProjectLib.Message msg) {
         switch (phase) {
             case PREPARE:
@@ -68,10 +93,18 @@ public class Transaction {
         }
     }
 
+	/**
+     * Sets the response time, typically used for timeout calculations.
+     *
+     * @param time The time of the response in milliseconds.
+     */
 	public void setResponseTime(long time) {
 		responseTime = time;
 	}
     
+	/**
+     * Commits the transaction by sending a commit message to all nodes involved in the transaction.
+     */
     public void commit() {
         for (String node : sourceMap.keySet()) {
             String msg2Send = "decision:" + id + ":" + "commit:" + String.join(",", sourceMap.get(node));
@@ -82,6 +115,9 @@ public class Transaction {
 		WAL.write2Log("phase: commit" + ", id: " + id);
     }
 
+	/**
+     * Aborts the transaction by sending an abort message to all nodes involved in the transaction.
+     */
     public void abort() {
         for (String node : sourceMap.keySet()) {
             String msg2Send = "decision:" + id + ":" + "abort:" + String.join(",", sourceMap.get(node));
@@ -92,6 +128,11 @@ public class Transaction {
 		WAL.write2Log("phase: abort" + ", id: " + id);
     }
 
+	/**
+     * Processes responses received during the prepare phase of the transaction.
+     *
+     * @param msg The prepare phase response message from a node.
+     */
     public void handlePrepareRes(ProjectLib.Message msg) {
 		String res = new String(msg.body).split(":", 2)[1];
 		System.out.println("Received prepare response from " + msg.addr + " Content: " + res + " id: " + id);
@@ -120,6 +161,11 @@ public class Transaction {
 		}
 	}
 
+	/**
+     * Processes responses received during the decision phase of the transaction.
+     *
+     * @param msg The decision phase response message from a node.
+     */
     public void handleDecisionRes(ProjectLib.Message msg) {
 		String res = new String(msg.body).split(":", 2)[1];
 		String msg2Log = "Received decision response from " + msg.addr + " Content: " + res + " id: " + id;
@@ -141,7 +187,85 @@ public class Transaction {
 		}
     }
 
-    public void setPhase(Phase phase) {
+	/**
+     * Writes the image data to the specified directory on the disk.
+     *
+     * @param file The file path where the image is to be written.
+     * @param img  The image data to write.
+     */
+    private void write2Dir(String file, byte[] img) {
+		try {
+			Files.write(Paths.get(file), img);
+		} catch (IOException e) {
+			e.printStackTrace();
+			System.out.println("Server: Error while writing image to disk");
+		}
+	}
+    
+	/**
+     * Parses the source information to map each node to the files it handles.
+     *
+     * @param sources Array of strings representing nodes and their associated files.
+     * @return A map of nodes to their lists of files.
+     */
+    private Map<String, List<String>> parseSources(String[] sources) {
+		Map<String, List<String>> sourceMap = new HashMap<>();
+		for (String source : sources) {
+			String[] parts = source.split(":", 2);
+			String node = parts[0];
+			String fileName = parts[1];
+			if (!sourceMap.containsKey(node)) {
+				sourceMap.put(node, new ArrayList<>());
+			}
+			sourceMap.get(node).add(fileName);
+		}
+		return sourceMap;
+	}
+
+	/**
+     * Checks if the response time has exceeded the defined timeout.
+     *
+     * @return true if the current time minus the start time is greater than the timeout, otherwise false.
+     */
+	private boolean isTimeout() {
+		return responseTime - startTime > TIMEOUT;
+	}
+
+	/**
+     * Determines if all nodes have responded positively ('Yes') to the transaction.
+     *
+     * @return true if all responses are 'Yes', otherwise false.
+     */
+	private boolean allYes() {
+		return nodeRes.values().stream().allMatch(decision -> decision.equals(Boolean.TRUE));
+	}
+
+	/**
+     * Checks if all responses have been received from all nodes involved in the transaction.
+     *
+     * @return true if all responses have been received, otherwise false.
+     */
+    public boolean recvAllRes() {
+		for (String node : sourceMap.keySet()) {
+			if (!nodeRes.containsKey(node)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+     * Enumeration defining the possible phases of a transaction.
+     */
+    public enum Phase {
+		PREPARE,
+        COMMIT,
+        ABORT,
+		DONE
+	}
+
+	/* some getters and setters */
+	public void setPhase(Phase phase) {
         this.phase = phase;
     }
 
@@ -159,55 +283,5 @@ public class Transaction {
 
 	public long getStartTime() {
 		return startTime;
-	}
-
-    private void write2Dir(String file, byte[] img) {
-		try {
-			Files.write(Paths.get(file), img);
-		} catch (IOException e) {
-			e.printStackTrace();
-			System.out.println("Server: Error while writing image to disk");
-		}
-	}
-    
-    private Map<String, List<String>> parseSources(String[] sources) {
-		Map<String, List<String>> sourceMap = new HashMap<>();
-		for (String source : sources) {
-			String[] parts = source.split(":", 2);
-			String node = parts[0];
-			String fileName = parts[1];
-			if (!sourceMap.containsKey(node)) {
-				sourceMap.put(node, new ArrayList<>());
-			}
-			sourceMap.get(node).add(fileName);
-		}
-		return sourceMap;
-	}
-
-    public boolean recvAllRes() {
-		for (String node : sourceMap.keySet()) {
-			if (!nodeRes.containsKey(node)) {
-				return false;
-			}
-		}
-		return true;
-	}
-
-	private boolean isTimeout() {
-		// System.out.println("Response time: " + responseTime + " Start time: " + startTime);
-		// System.out.println("Used time: " + (responseTime - startTime));
-		return responseTime - startTime > TIMEOUT;
-	}
-
-	private boolean allYes() {
-		return nodeRes.values().stream().allMatch(decision -> decision.equals(Boolean.TRUE));
-	}
-
-    public enum Phase {
-		PREPARE,
-		// DECISION
-        COMMIT,
-        ABORT,
-		DONE
 	}
 }

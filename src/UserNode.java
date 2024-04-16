@@ -9,6 +9,11 @@ import java.nio.file.Paths;
 import java.util.Base64;
 import java.util.HashMap;
 
+/**
+ * Represents a user node in a distributed system that handles messages related to file operations,
+ * including locking, logging, and transaction decisions. It implements the ProjectLib.MessageHandling
+ * interface to receive and process messages according to a two-phase commit protocol.
+ */
 public class UserNode implements ProjectLib.MessageHandling {
 
 	private final String myId;
@@ -17,10 +22,23 @@ public class UserNode implements ProjectLib.MessageHandling {
 	private static RecoveryManager rm;
 	private static ProjectLib PL;
 	
+	/**
+     * Constructor that initializes the UserNode with a given identifier.
+     * 
+     * @param id The unique identifier for this node.
+     */
 	public UserNode(String id) {
 		myId = id;
 	}
 
+	/**
+     * Receives and handles messages from other nodes or processes.
+     * This method processes 'prepare' messages for phase-1 and 'decision' messages for phase-2 of
+     * the transaction protocol.
+     *
+     * @param msg The message received.
+     * @return true Always returns true to indicate successful handling of the message.
+     */
 	@Override
 	public boolean deliverMessage(ProjectLib.Message msg) {
 		// System.out.println(myId + ": Got message from " + msg.addr);
@@ -37,6 +55,12 @@ public class UserNode implements ProjectLib.MessageHandling {
 		return true;
 	}
 
+	/**
+     * Handles the 'prepare' phase of a transaction by deciding whether to lock the required
+     * resources and asking the user for confirmation to proceed.
+     *
+     * @param msg The 'prepare' message containing details about the transaction and the resources involved.
+     */
 	private void handlePrepare(ProjectLib.Message msg) {
 		String[] parts = new String(msg.body).split(":", 4);
 		String transactionId = parts[1];
@@ -81,6 +105,12 @@ public class UserNode implements ProjectLib.MessageHandling {
 		PL.sendMessage(new ProjectLib.Message(msg.addr, res.getBytes()));
 	}
 
+	/**
+     * Handles the 'decision' phase of a transaction, which includes committing or aborting
+     * the transaction based on the received decision.
+     *
+     * @param msg The 'decision' message containing the final decision and details about the transaction.
+     */
 	private void handleDecision(ProjectLib.Message msg) {
 		String[] parts = new String(msg.body).split(":", 4);
 		String transactionId = parts[1];
@@ -94,8 +124,6 @@ public class UserNode implements ProjectLib.MessageHandling {
 			PL.sendMessage(new ProjectLib.Message(msg.addr, res.getBytes()));
 			return;
 		}
-
-		// WAL.write2Log("id: " + transactionId + ", source: " + msg.addr + ", content: " + decision);
 
 		synchronized (lockedFiles) {
 			try {
@@ -118,6 +146,12 @@ public class UserNode implements ProjectLib.MessageHandling {
 		}
 	}
 
+	/**
+	 * Checks if the given files exist.
+	 * 
+	 * @param files The list of file paths to check.
+	 * @return true if all files exist, false otherwise.
+	 */
 	private boolean checkFilesExists(String files[]) {
 		for (String file : files) {
 			File f = new File(file);
@@ -128,6 +162,12 @@ public class UserNode implements ProjectLib.MessageHandling {
 		return true;
 	}
 
+	/**
+	 * Checks if the given files are currently locked.
+	 * 
+	 * @param files The list of file paths to check.
+	 * @return true if any file is locked, false otherwise.
+	 */
 	private boolean checkFilesOccupied(String files[]) {
 		for (String file : files) {
 			if (lockedFiles.containsKey(file)) {
@@ -137,6 +177,11 @@ public class UserNode implements ProjectLib.MessageHandling {
 		return false;
 	}
 
+	/**
+	 * Deletes the given files.
+	 * 
+	 * @param files The list of file paths to delete.
+	 */
 	private void deleteFiles(String files[]) {
 		for (String file : files) {
 			File f = new File(file);
@@ -144,6 +189,12 @@ public class UserNode implements ProjectLib.MessageHandling {
 		}
 	}
 
+	/**
+	 * Locks the given files.
+	 * 
+	 * @param files The list of file paths to lock.
+	 * @throws IOException If an I/O error occurs while locking the files.
+	 */
 	private void lockResources(String files[]) throws IOException {
 		for (String file : files) {
 			RandomAccessFile raFile = new RandomAccessFile(file, "rw");
@@ -153,6 +204,12 @@ public class UserNode implements ProjectLib.MessageHandling {
 		}
 	}
 
+	/**
+	 * Releases the locks on the given files.
+	 * 
+	 * @param files The list of file paths to release.
+	 * @throws IOException If an I/O error occurs while releasing the locks.
+	 */
 	private void releaseResources(String files[]) throws IOException {
 		for (String file : files) {
 			if (lockedFiles.containsKey(file)) {
@@ -162,6 +219,12 @@ public class UserNode implements ProjectLib.MessageHandling {
 		}
 	}
 
+	/**
+	 * Retrieves the Write-Ahead Log (WAL) for the given transaction.
+	 * 
+	 * @param transactionId The unique identifier for the transaction.
+	 * @return The WAL for the transaction.
+	 */
 	private Log getWAL(String transactionId) {
 		if (!WALs.containsKey(transactionId)) {
 			WALs.put(transactionId, new Log(transactionId));

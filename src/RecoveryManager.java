@@ -9,14 +9,31 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Manages the recovery of transactions that may not have completed due to system failures.
+ * This class interacts with the system's log files to determine the state of incomplete
+ * transactions and attempts to bring them to a consistent state by re-initiating their
+ * respective commit protocols.
+ */
 public class RecoveryManager {
 
     private ProjectLib PL;
 
+    /**
+     * Constructs a RecoveryManager with a reference to ProjectLib for handling system-wide operations.
+     *
+     * @param PL The ProjectLib instance used for sending messages and other system interactions.
+     */
     public RecoveryManager(ProjectLib PL) {
         this.PL = PL;
     }
 
+    /**
+     * Retrieves transactions that need to be recovered from log files. This method scans log files
+     * in a predefined directory, interprets their content, and reconstructs transaction states.
+     *
+     * @return A concurrent hash map of transaction IDs to their corresponding Transaction objects that need recovery.
+     */
     public ConcurrentHashMap<String, Transaction> getTransactions2Recover() {
         ConcurrentHashMap<String, Transaction> res = new ConcurrentHashMap<>();
         File logsDir = new File("./logs");
@@ -42,6 +59,12 @@ public class RecoveryManager {
         return res;
     }
 
+    /**
+     * Initiates the recovery process for a given transaction based on its last known phase.
+     * Depending on the phase, it may re-ask for votes, commit, or abort the transaction.
+     *
+     * @param t The transaction to be recovered.
+     */
     public void recover(Transaction t) {
         Transaction.Phase phase = t.getPhase();
         System.out.println("Recovering transaction: " + t.getID());
@@ -62,6 +85,14 @@ public class RecoveryManager {
         }
     }
 
+    /**
+     * Reads a log file to find the last prepare response related to a specific transaction.
+     * This helps in determining the state of the transaction during the prepare phase.
+     *
+     * @param logFile The log file to be read.
+     * @param id      The transaction ID to search for in the log file.
+     * @return The last prepare response found in the log file, or null if no such response exists.
+     */
     public String getPrepareReply(File logFile, String id) {
         try {
             BufferedReader reader = new BufferedReader(new FileReader(logFile));
@@ -82,6 +113,14 @@ public class RecoveryManager {
         return null;
     }
 
+    /**
+     * Reads a log file to find the last decision response related to a specific transaction.
+     * This is used to confirm whether all nodes acknowledged the final decision of the transaction.
+     *
+     * @param logFile The log file to be read.
+     * @param id      The transaction ID to search for in the log file.
+     * @return The last decision response found in the log file, or null if no such response exists.
+     */
     public String getDecision(File logFile, String id) {
         try {
             BufferedReader reader = new BufferedReader(new FileReader(logFile));
@@ -102,6 +141,13 @@ public class RecoveryManager {
         return null;
     }
 
+    /**
+     * Parses a log file to determine the last known phase of a transaction based on log entries.
+     *
+     * @param logFile The file containing the log entries.
+     * @param id      The ID of the transaction to determine the phase for.
+     * @return The last known phase of the transaction as recorded in the log file.
+     */
     private Transaction.Phase parseLogStatus(File logFile, String id) {
         Transaction.Phase res = null;
         String latestPhase = null;
@@ -138,6 +184,13 @@ public class RecoveryManager {
         return res;
     }
 
+    /**
+     * Parses the initial parameters of a transaction from a log file.
+     * These parameters typically include the file name, image data, and source nodes.
+     *
+     * @param logFile The file to parse the parameters from.
+     * @return A list of strings representing the transaction parameters.
+     */
     private List<String> parseLogParam(File logFile) {
         List<String> params = new ArrayList<>();
 
