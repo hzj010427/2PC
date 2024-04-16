@@ -31,27 +31,36 @@ public class Transaction {
         this.phase = Phase.PREPARE;
         this.nodeRes = new HashMap<>();
 		this.WAL = new Log(id);
-		WAL.write2Log("id: " + id + ", user nodes: " + String.join(",", sourceMap.keySet()));
     }
 
     public void askForVote() {
 		startTime = System.currentTimeMillis(); // start timer before sending prepare message
         String imgBase64 = Base64.getEncoder().encodeToString(image);
-		WAL.write2Log("phase: prepare");
+		WAL.write2Log("phase: prepare" + ", id: " + id);
 
         for (String node : sourceMap.keySet()) {
             String msg = "prepare:" + id + ":" + String.join(",", sourceMap.get(node)) + ":" + imgBase64;
-			WAL.write2Log("dest: " + node + ", content: prepare");
+			// WAL.write2Log("dest: " + node + ", content: prepare");
             PL.sendMessage(new ProjectLib.Message(node, msg.getBytes()));
         }
     }
 
-    public void handleRes(ProjectLib.Message msg) {
+	public void reAskForVote() {
+		String imgBase64 = Base64.getEncoder().encodeToString(image);
+		for (String node : sourceMap.keySet()) {
+            String msg = "prepare:" + id + ":" + String.join(",", sourceMap.get(node)) + ":" + imgBase64;
+			// WAL.write2Log("dest: " + node + ", content: prepare");
+            PL.sendMessage(new ProjectLib.Message(node, msg.getBytes()));
+        }
+	}
+
+    public synchronized void handleRes(ProjectLib.Message msg) {
         switch (phase) {
             case PREPARE:
                 handlePrepareRes(msg);
                 break;
-            case DECISION:
+            case COMMIT:
+            case ABORT:
                 handleDecisionRes(msg);
                 break;
             default:
@@ -61,63 +70,96 @@ public class Transaction {
 
 	public void setResponseTime(long time) {
 		responseTime = time;
-	}	
+	}
+    
+    public void commit() {
+        for (String node : sourceMap.keySet()) {
+            String msg2Send = "decision:" + id + ":" + "commit:" + String.join(",", sourceMap.get(node));
+            // WAL.write2Log("dest: " + node + ", content: commit");
+            PL.sendMessage(new ProjectLib.Message(node, msg2Send.getBytes()));
+        }
+        phase = Phase.COMMIT;
+		WAL.write2Log("phase: commit" + ", id: " + id);
+    }
 
-    private void handlePrepareRes(ProjectLib.Message msg) {
+    public void abort() {
+        for (String node : sourceMap.keySet()) {
+            String msg2Send = "decision:" + id + ":" + "abort:" + String.join(",", sourceMap.get(node));
+            // WAL.write2Log("dest: " + node + ", content: abort");
+            PL.sendMessage(new ProjectLib.Message(node, msg2Send.getBytes()));
+        }
+        phase = Phase.ABORT;
+		WAL.write2Log("phase: abort" + ", id: " + id);
+    }
+
+    public void handlePrepareRes(ProjectLib.Message msg) {
 		String res = new String(msg.body).split(":", 2)[1];
 		System.out.println("Received prepare response from " + msg.addr + " Content: " + res + " id: " + id);
-		WAL.write2Log("source: " + msg.addr + ", content: " + res);
+		// WAL.write2Log("source: " + msg.addr + ", content: " + res);
 
 		if (res.equals("Yes") || res.equals("No")) {
+			WAL.write2Log("phase: prepare" + ", id: " + id);
 			nodeRes.put(msg.addr, res.equals("Yes"));
 
 			boolean shouldCommit = !isTimeout() && recvAllRes() && allYes();
 			boolean shouldAbort = isTimeout() || (recvAllRes() && !allYes());
 
 			if (shouldCommit) {
-				for (String node : sourceMap.keySet()) {
-					String msg2Send = "decision:" + id + ":" + "commit:" + String.join(",", sourceMap.get(node));
-					WAL.write2Log("dest: " + node + ", content: commit");
-					PL.sendMessage(new ProjectLib.Message(node, msg2Send.getBytes()));
-				}
+				commit();
 			} else if (shouldAbort) {
-				for (String node : sourceMap.keySet()) {
-					String msg2Send = "decision:" + id + ":" + "abort:" + String.join(",", sourceMap.get(node));
-					WAL.write2Log("dest: " + node + ", content: abort");
-					PL.sendMessage(new ProjectLib.Message(node, msg2Send.getBytes()));
-				}
+				abort();
 			}
 
 			if (shouldCommit || shouldAbort) {
-				phase = Phase.DECISION;
-				WAL.write2Log("phase: " + (shouldCommit ? "commit" : "abort"));
-				PL.fsync(); // flush the messages before changing phase
 				nodeRes.clear(); // clear the responses for the next phase
 			}
+
+			PL.fsync(); // flush the responses to stable storage
 		} else {
 			System.out.println(id + ": drop message in prepare phase");
 		}
 	}
 
-    private void handleDecisionRes(ProjectLib.Message msg) {
+    public void handleDecisionRes(ProjectLib.Message msg) {
 		String res = new String(msg.body).split(":", 2)[1];
 		String msg2Log = "Received decision response from " + msg.addr + " Content: " + res + " id: " + id;
 		System.out.println(msg2Log);
-		WAL.write2Log("source: " + msg.addr + ", content: " + res);
+		// WAL.write2Log("source: " + msg.addr + ", content: " + res);
 
 		if (res.equals("ACK")) {
 			nodeRes.put(msg.addr, true);
 			if (recvAllRes()) {
 				System.out.println(id + ": All nodes have acknowledged");
 				write2Dir(fileName, image);
-				WAL.write2Log("phase: done");
+				phase = Phase.DONE;
+				// WAL.write2Log("phase: done" + ", id: " + id);
 				WAL.close();
 				PL.fsync(); // flush the messages when all nodes have acknowledged
-			} 
+			}
 		} else {
 			System.out.println(id + ": drop message in decision phase");
 		}
     }
+
+    public void setPhase(Phase phase) {
+        this.phase = phase;
+    }
+
+    public Phase getPhase() {
+        return phase;
+    }
+
+    public String getID() {
+        return id;
+    }
+
+    public Log getWAL() {
+        return WAL;
+    }
+
+	public long getStartTime() {
+		return startTime;
+	}
 
     private void write2Dir(String file, byte[] img) {
 		try {
@@ -142,7 +184,7 @@ public class Transaction {
 		return sourceMap;
 	}
 
-    private boolean recvAllRes() {
+    public boolean recvAllRes() {
 		for (String node : sourceMap.keySet()) {
 			if (!nodeRes.containsKey(node)) {
 				return false;
@@ -152,6 +194,8 @@ public class Transaction {
 	}
 
 	private boolean isTimeout() {
+		// System.out.println("Response time: " + responseTime + " Start time: " + startTime);
+		// System.out.println("Used time: " + (responseTime - startTime));
 		return responseTime - startTime > TIMEOUT;
 	}
 
@@ -159,8 +203,11 @@ public class Transaction {
 		return nodeRes.values().stream().allMatch(decision -> decision.equals(Boolean.TRUE));
 	}
 
-    private enum Phase {
+    public enum Phase {
 		PREPARE,
-		DECISION
+		// DECISION
+        COMMIT,
+        ABORT,
+		DONE
 	}
 }

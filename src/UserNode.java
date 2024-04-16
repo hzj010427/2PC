@@ -14,7 +14,8 @@ public class UserNode implements ProjectLib.MessageHandling {
 	private final String myId;
 	private final HashMap<String, FileLock> lockedFiles = new HashMap<>();
 	private final HashMap<String, Log> WALs = new HashMap<>();
-	public static ProjectLib PL;
+	private static RecoveryManager rm;
+	private static ProjectLib PL;
 	
 	public UserNode(String id) {
 		myId = id;
@@ -22,7 +23,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 
 	@Override
 	public boolean deliverMessage(ProjectLib.Message msg) {
-		System.out.println(myId + ": Got message from " + msg.addr);
+		// System.out.println(myId + ": Got message from " + msg.addr);
 		String parsedMsg = new String(msg.body);
 
 		if (parsedMsg.startsWith("prepare")) { // phase-1
@@ -44,7 +45,14 @@ public class UserNode implements ProjectLib.MessageHandling {
 		boolean userDecision = false;
 		String res = null;
 		Log WAL = getWAL(transactionId);
-		WAL.write2Log("id: " + transactionId + ", source: " + msg.addr + ", content: prepare");
+		// WAL.write2Log("id: " + transactionId + ", source: " + msg.addr + ", content: prepare");
+
+		/* get response from the log */
+		res = rm.getPrepareReply(WAL.getLogFile(), transactionId);
+		if (res != null) {
+			PL.sendMessage(new ProjectLib.Message(msg.addr, res.getBytes()));
+			return;
+		}
 
 		synchronized (lockedFiles) {
 			if (checkFilesExists(files) && !checkFilesOccupied(files)) {
@@ -68,7 +76,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 		}
 
 		res = userDecision ? transactionId + ":Yes" : transactionId + ":No";
-		WAL.write2Log("response: " + (userDecision ? "Yes" : "No"));
+		WAL.write2Log(res);
 		PL.fsync();
 		PL.sendMessage(new ProjectLib.Message(msg.addr, res.getBytes()));
 	}
@@ -79,15 +87,24 @@ public class UserNode implements ProjectLib.MessageHandling {
 		String decision = parts[2];
 		String files[] = parts[3].split(",");
 		Log WAL = getWAL(transactionId);
-		WAL.write2Log("id: " + transactionId + ", source: " + msg.addr + ", content: " + decision);
+
+		/* get response from the log */
+		String res = rm.getDecision(WAL.getLogFile(), transactionId);
+		if (res != null) {
+			PL.sendMessage(new ProjectLib.Message(msg.addr, res.getBytes()));
+			return;
+		}
+
+		// WAL.write2Log("id: " + transactionId + ", source: " + msg.addr + ", content: " + decision);
 
 		synchronized (lockedFiles) {
 			try {
 				if (decision.equals("commit")) {
+					res = transactionId + ":ACK";
+					WAL.write2Log(res);
+					PL.fsync();
 					deleteFiles(files);
 					releaseResources(files);
-					String res = transactionId + ":ACK";
-					WAL.write2Log("response: ACK");
 					PL.sendMessage(new ProjectLib.Message(msg.addr, res.getBytes()));
 				} else if (decision.equals("abort")) {
 					releaseResources(files);
@@ -156,5 +173,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 		if (args.length != 2) throw new Exception("Need 2 args: <port> <id>");
 		UserNode UN = new UserNode(args[1]);
 		PL = new ProjectLib(Integer.parseInt(args[0]), args[1], UN);
+		rm = new RecoveryManager(PL);
+		System.out.println("UserNode " + args[1] + " start");
 	}
 }

@@ -1,0 +1,161 @@
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+public class RecoveryManager {
+
+    private ProjectLib PL;
+
+    public RecoveryManager(ProjectLib PL) {
+        this.PL = PL;
+    }
+
+    public ConcurrentHashMap<String, Transaction> getTransactions2Recover() {
+        ConcurrentHashMap<String, Transaction> res = new ConcurrentHashMap<>();
+        File logsDir = new File("./logs");
+        File[] logFiles = logsDir.listFiles();
+
+        if (logFiles == null) {
+            return null;
+        }
+
+        for (File logFile : logFiles) {
+            List<String> commitContent = parseLogParam(logFile);
+            String transactionId = logFile.getName().split("\\.")[0];
+            Transaction.Phase phase = parseLogStatus(logFile, transactionId);
+            String fileName = commitContent.get(0);
+            byte[] img = Base64.getDecoder().decode(commitContent.get(1));
+            String[] sources = commitContent.get(2).split(",");
+
+            Transaction t = new Transaction(transactionId, fileName, img, sources, PL);
+            t.setPhase(phase);
+            res.put(transactionId, t);
+        }
+
+        return res;
+    }
+
+    public void recover(Transaction t) {
+        Transaction.Phase phase = t.getPhase();
+        System.out.println("Recovering transaction: " + t.getID());
+
+        switch (phase) {
+            case PREPARE:
+                t.askForVote();
+                break;
+            case ABORT:
+                t.abort();
+                break;
+            case COMMIT:
+                t.commit();
+                break;
+            default:
+                System.out.println("error: fail to recover" + t.getID());
+                break;
+        }
+    }
+
+    public String getPrepareReply(File logFile, String id) {
+        try {
+            BufferedReader reader = new BufferedReader(new FileReader(logFile));
+            String line;
+            String prepareLine = null;
+            while ((line = reader.readLine()) != null) {
+                if ((line.contains("Yes") || line.contains("No")) && line.contains(id)) {
+                    prepareLine = line;
+                    reader.close();
+                    break;
+                }
+            }
+            return prepareLine;
+        } catch (IOException e) {
+            e.printStackTrace();
+            System.out.println("Error reading log file: " + logFile.getName());
+        }
+        return null;
+    }
+
+    public String getDecision(File logFile, String id) {
+        try {
+            BufferedReader reader = new BufferedReader(new FileReader(logFile));
+            String line;
+            String ackLine = null;
+            while ((line = reader.readLine()) != null) {
+                if (line.contains("ACK") && line.contains(id)) {
+                    ackLine = line;
+                    reader.close();
+                    break;
+                }
+            }
+            return ackLine;
+        } catch (IOException e) {
+            e.printStackTrace();
+            System.out.println("Error reading log file: " + logFile.getName());
+        }
+        return null;
+    }
+
+    private Transaction.Phase parseLogStatus(File logFile, String id) {
+        Transaction.Phase res = null;
+        String latestPhase = null;
+        
+        try {
+            BufferedReader reader = new BufferedReader(new FileReader(logFile));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.contains("phase") && line.contains(id)) {
+                    latestPhase = line.split(",")[0].split(":")[1].trim();
+                    System.out.println("latest phase: " + latestPhase + " for transaction " + id);
+
+                    switch (latestPhase) {
+                        case "prepare":
+                            res = Transaction.Phase.PREPARE;
+                            break;
+                        case "commit":
+                            res = Transaction.Phase.COMMIT;
+                            break;
+                        case "abort":
+                            res = Transaction.Phase.ABORT;
+                            break;
+                        default:
+                            System.out.println("Error parsing log file: " + logFile.getName());
+                            break;
+                    }
+                }
+            }
+            reader.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+            System.out.println("Error reading log file: " + logFile.getName());
+        }
+        return res;
+    }
+
+    private List<String> parseLogParam(File logFile) {
+        List<String> params = new ArrayList<>();
+
+        try {
+            BufferedReader reader = new BufferedReader(new FileReader(logFile));
+            String line = reader.readLine();
+            if (line != null) {
+                String[] paramTokens = line.split("-");
+                for (String paramToken : paramTokens) {
+                    params.add(paramToken.trim());
+                }
+            }
+            reader.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+            System.out.println("Error reading log file: " + logFile.getName());
+        }
+
+        return params;
+    }
+}
