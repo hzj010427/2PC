@@ -33,7 +33,6 @@ public class MsgSender implements Runnable {
      * This process helps ensure that transactions do not stall due to missed or delayed responses
      * from participating nodes.
      */
-    // TODO: 已经有回复的node不再发送
     @Override  
     public void run() {
         try {

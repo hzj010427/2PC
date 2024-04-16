@@ -162,6 +162,7 @@ public class RecoveryManager {
 
                     switch (latestPhase) {
                         case "prepare":
+                            // 可能需要需改成ABORT阶段 恢复之后直接abort如果是在prepare阶段的话
                             res = Transaction.Phase.PREPARE;
                             break;
                         case "commit":
